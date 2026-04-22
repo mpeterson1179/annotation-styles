@@ -119,6 +119,21 @@ function rowAnnotationTypes(row) {
   return [ANNOTATION_TYPE_OPTIONS[0]];
 }
 
+function createDefaultAnnotationRows() {
+  return [
+    {
+      id: crypto.randomUUID(),
+      annotationTypes: ["Cloud"],
+      fillColor: "Green",
+      fillOpacity: 50,
+      strokeColor: "Green",
+      strokeOpacity: 100,
+      lineWeight: 1,
+      companies: ["Westside Mechanical"],
+    },
+  ];
+}
+
 const ANNOTATION_TABLE_COLUMNS = [
   "Annotation Type",
   "Fill Color",
@@ -305,7 +320,7 @@ function DefaultAnnotationStylesView() {
   const dialogRef = useRef(/** @type {HTMLDialogElement | null} */ (null));
   const [dialogOpen, setDialogOpen] = useState(false);
   const [companyPickerKey, setCompanyPickerKey] = useState(0);
-  const [rows, setRows] = useState([]);
+  const [rows, setRows] = useState(() => createDefaultAnnotationRows());
   const [form, setForm] = useState(() => defaultFormState());
   const [editingCell, setEditingCell] = useState(null);
   const [selectedRowIds, setSelectedRowIds] = useState(() => new Set());
