@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import "./App.css";
 
 const NAV_ITEMS = [
@@ -117,6 +117,69 @@ function rowAnnotationTypes(row) {
   if (Array.isArray(row.annotationTypes)) return row.annotationTypes;
   if (typeof row.annotationType === "string" && row.annotationType) return [row.annotationType];
   return [ANNOTATION_TYPE_OPTIONS[0]];
+}
+
+function pairKey(type, company) {
+  return `${type}\0${company}`;
+}
+
+/** @param {{ annotationTypes?: string[], companies?: string[], annotationType?: string }} row */
+function rowPairKeys(row) {
+  const types = rowAnnotationTypes(row);
+  const companies = Array.isArray(row.companies) ? row.companies : [];
+  const keys = [];
+  for (const t of types) {
+    for (const c of companies) {
+      keys.push(pairKey(t, c));
+    }
+  }
+  return keys;
+}
+
+/** Map pairKey -> row id (first row wins) for all rows except excludeRowId. */
+function pairKeyToRowIdMap(rows, excludeRowId) {
+  const map = new Map();
+  for (const row of rows) {
+    if (row.id === excludeRowId) continue;
+    for (const k of rowPairKeys(row)) {
+      if (!map.has(k)) map.set(k, row.id);
+    }
+  }
+  return map;
+}
+
+/**
+ * @param {{ annotationTypes?: string[], companies?: string[], annotationType?: string }} candidate
+ * @param {Array<{ id: string, annotationTypes?: string[], companies?: string[], annotationType?: string }>} rows
+ * @param {string | null} excludeRowId
+ * @returns {{ type: string, company: string, otherRowId: string }[]}
+ */
+function findPairConflicts(candidate, rows, excludeRowId) {
+  const owners = pairKeyToRowIdMap(rows, excludeRowId);
+  const out = [];
+  const types = rowAnnotationTypes(candidate);
+  const companies = Array.isArray(candidate.companies) ? candidate.companies : [];
+  for (const t of types) {
+    for (const c of companies) {
+      const otherRowId = owners.get(pairKey(t, c));
+      if (otherRowId) {
+        out.push({ type: t, company: c, otherRowId });
+      }
+    }
+  }
+  return out;
+}
+
+function formatConflictPairs(conflicts) {
+  const seen = new Set();
+  const parts = [];
+  for (const { type, company } of conflicts) {
+    const k = pairKey(type, company);
+    if (seen.has(k)) continue;
+    seen.add(k);
+    parts.push(`${type} + ${company}`);
+  }
+  return parts.join("; ");
 }
 
 function createDefaultAnnotationRows() {
@@ -324,7 +387,32 @@ function DefaultAnnotationStylesView() {
   const [form, setForm] = useState(() => defaultFormState());
   const [editingCell, setEditingCell] = useState(null);
   const [selectedRowIds, setSelectedRowIds] = useState(() => new Set());
+  /** `index`: show row numbers; `checkbox`: show selection checkboxes (after user activates via row number). */
+  const [selectionColumnMode, setSelectionColumnMode] = useState(/** @type {"index" | "checkbox"} */ ("index"));
+  /** Inline edit blocked: highlight this row and the row(s) that already own the pair(s). */
+  const [tablePairConflict, setTablePairConflict] = useState(
+    /** @type {{ sourceRowId: string, otherRowIds: string[], summary: string } | null} */ (null)
+  );
   const selectAllRef = useRef(/** @type {HTMLInputElement | null} */ (null));
+
+  const dialogPairConflicts = useMemo(() => {
+    if (!dialogOpen) return [];
+    return findPairConflicts(
+      { annotationTypes: form.annotationTypes, companies: form.companies },
+      rows,
+      null
+    );
+  }, [dialogOpen, form.annotationTypes, form.companies, rows]);
+
+  const conflictHighlightedRowIds = useMemo(() => {
+    const s = new Set();
+    for (const c of dialogPairConflicts) s.add(c.otherRowId);
+    if (tablePairConflict) {
+      tablePairConflict.otherRowIds.forEach((id) => s.add(id));
+      s.add(tablePairConflict.sourceRowId);
+    }
+    return s;
+  }, [dialogPairConflicts, tablePairConflict]);
 
   useEffect(() => {
     const el = dialogRef.current;
@@ -352,6 +440,12 @@ function DefaultAnnotationStylesView() {
   }, [rows]);
 
   useEffect(() => {
+    if (selectionColumnMode === "checkbox" && selectedRowIds.size === 0) {
+      setSelectionColumnMode("index");
+    }
+  }, [selectionColumnMode, selectedRowIds]);
+
+  useEffect(() => {
     if (editingCell && !rows.some((r) => r.id === editingCell.rowId)) {
       setEditingCell(null);
     }
@@ -364,6 +458,11 @@ function DefaultAnnotationStylesView() {
       else next.add(id);
       return next;
     });
+  }
+
+  function activateSelectionColumnFromRow(rowId) {
+    setSelectionColumnMode("checkbox");
+    setSelectedRowIds(new Set([rowId]));
   }
 
   function toggleSelectAll() {
@@ -383,11 +482,13 @@ function DefaultAnnotationStylesView() {
       setEditingCell(null);
     }
     setSelectedRowIds(new Set());
+    setTablePairConflict(null);
   }
 
   function openDialog() {
     setForm(defaultFormState());
     setCompanyPickerKey((k) => k + 1);
+    setTablePairConflict(null);
     setDialogOpen(true);
   }
 
@@ -397,6 +498,12 @@ function DefaultAnnotationStylesView() {
 
   function handleAddSubmit(e) {
     e.preventDefault();
+    const addConflicts = findPairConflicts(
+      { annotationTypes: form.annotationTypes, companies: form.companies },
+      rows,
+      null
+    );
+    if (addConflicts.length) return;
     setRows((prev) => [
       ...prev,
       {
@@ -415,6 +522,23 @@ function DefaultAnnotationStylesView() {
 
   function patchRow(rowId, patch) {
     setRows((prev) => prev.map((r) => (r.id === rowId ? { ...r, ...patch } : r)));
+  }
+
+  function tryPatchRowPairs(rowId, patch) {
+    const row = rows.find((r) => r.id === rowId);
+    if (!row) return;
+    const candidate = { ...row, ...patch };
+    const conflicts = findPairConflicts(candidate, rows, rowId);
+    if (conflicts.length) {
+      setTablePairConflict({
+        sourceRowId: rowId,
+        otherRowIds: [...new Set(conflicts.map((c) => c.otherRowId))],
+        summary: formatConflictPairs(conflicts),
+      });
+      return;
+    }
+    setTablePairConflict(null);
+    patchRow(rowId, patch);
   }
 
   function isCellEditing(rowId, field) {
@@ -479,6 +603,13 @@ function DefaultAnnotationStylesView() {
         </span>
       </div>
 
+      {tablePairConflict && (
+        <div className="rule-conflict-banner" role="alert">
+          Each annotation type and company can only appear in one rule. Conflicting combinations: {tablePairConflict.summary}.
+          The highlighted rows include the rule you are editing and the rule(s) that already use this pairing.
+        </div>
+      )}
+
       <div className={`table-card${editingCell ? " table-card--editing" : ""}`}>
         <div className="table-card__toolbar">
           <button
@@ -499,16 +630,27 @@ function DefaultAnnotationStylesView() {
             <thead>
               <tr>
                 <th scope="col" className="data-table__th-select">
-                  <span className="visually-hidden">Select rows</span>
-                  <input
-                    ref={selectAllRef}
-                    type="checkbox"
-                    className="data-table__checkbox"
-                    checked={allRowsSelected}
-                    onChange={toggleSelectAll}
-                    disabled={rows.length === 0}
-                    aria-label="Select all rows"
-                  />
+                  {selectionColumnMode === "checkbox" ? (
+                    <>
+                      <span className="visually-hidden">Select rows</span>
+                      <input
+                        ref={selectAllRef}
+                        type="checkbox"
+                        className="data-table__checkbox"
+                        checked={allRowsSelected}
+                        onChange={toggleSelectAll}
+                        disabled={rows.length === 0}
+                        aria-label="Select all rows"
+                      />
+                    </>
+                  ) : (
+                    <>
+                      <span className="visually-hidden">Row number</span>
+                      <span className="data-table__th-index" aria-hidden>
+                        #
+                      </span>
+                    </>
+                  )}
                 </th>
                 {ANNOTATION_TABLE_COLUMNS.map((col) => (
                   <th key={col} scope="col">
@@ -525,24 +667,38 @@ function DefaultAnnotationStylesView() {
                   </td>
                 </tr>
               ) : (
-                rows.map((row) => (
+                rows.map((row, rowIndex) => (
                   <tr
                     key={row.id}
-                    className={
+                    className={[
                       editingCell?.rowId === row.id &&
                       (editingCell?.field === "companies" || editingCell?.field === "annotationTypes")
                         ? "data-table__row--cell-edit"
-                        : undefined
-                    }
+                        : "",
+                      conflictHighlightedRowIds.has(row.id) ? "data-table__row--rule-conflict" : "",
+                    ]
+                      .filter(Boolean)
+                      .join(" ") || undefined}
                   >
                     <td className="data-table__td-select">
-                      <input
-                        type="checkbox"
-                        className="data-table__checkbox"
-                        checked={selectedRowIds.has(row.id)}
-                        onChange={() => toggleRowSelected(row.id)}
-                        aria-label={`Select row ${rowAnnotationTypes(row).join(", ")}`}
-                      />
+                      {selectionColumnMode === "checkbox" ? (
+                        <input
+                          type="checkbox"
+                          className="data-table__checkbox"
+                          checked={selectedRowIds.has(row.id)}
+                          onChange={() => toggleRowSelected(row.id)}
+                          aria-label={`Select row ${rowAnnotationTypes(row).join(", ")}`}
+                        />
+                      ) : (
+                        <button
+                          type="button"
+                          className="data-table__row-index-btn"
+                          onClick={() => activateSelectionColumnFromRow(row.id)}
+                          aria-label={`Row ${rowIndex + 1}, select rows for deletion`}
+                        >
+                          {rowIndex + 1}
+                        </button>
+                      )}
                     </td>
                     <td>
                       {isCellEditing(row.id, "annotationTypes") ? (
@@ -564,7 +720,7 @@ function DefaultAnnotationStylesView() {
                             labelledBy={`annotation-types-cell-label-${row.id}`}
                             options={ANNOTATION_TYPE_OPTIONS}
                             value={rowAnnotationTypes(row)}
-                            onChange={(annotationTypes) => patchRow(row.id, { annotationTypes })}
+                            onChange={(annotationTypes) => tryPatchRowPairs(row.id, { annotationTypes })}
                             allSelectedPlaceholder="All types added"
                             addPlaceholder="Type or click to add…"
                             emptyFilterMessage="No matching types"
@@ -836,7 +992,7 @@ function DefaultAnnotationStylesView() {
                             labelledBy={`company-cell-label-${row.id}`}
                             options={COMPANY_OPTIONS}
                             value={row.companies}
-                            onChange={(companies) => patchRow(row.id, { companies })}
+                            onChange={(companies) => tryPatchRowPairs(row.id, { companies })}
                           />
                         </div>
                       ) : (
@@ -875,7 +1031,7 @@ function DefaultAnnotationStylesView() {
             New annotation style
           </h3>
           <form className="dialog-form" onSubmit={handleAddSubmit}>
-            <div className="dialog-select-wrap">
+            <div className={`dialog-select-wrap${dialogPairConflicts.length ? " dialog-select-wrap--conflict" : ""}`}>
               <span className="dialog-legend" id="annotation-types-label">
                 Annotation Type
               </span>
@@ -1056,7 +1212,7 @@ function DefaultAnnotationStylesView() {
               </div>
             </div>
 
-            <div className="dialog-select-wrap">
+            <div className={`dialog-select-wrap${dialogPairConflicts.length ? " dialog-select-wrap--conflict" : ""}`}>
               <span className="dialog-legend" id="company-label">
                 Company
               </span>
@@ -1070,11 +1226,19 @@ function DefaultAnnotationStylesView() {
               />
             </div>
 
+            {dialogPairConflicts.length > 0 && (
+              <div className="dialog-conflict-alert" role="alert">
+                Each annotation type and company can only appear in one rule. Conflicting combinations:{" "}
+                {formatConflictPairs(dialogPairConflicts)}. Adjust your selections or change the highlighted rule in the
+                table.
+              </div>
+            )}
+
             <div className="dialog-actions">
               <button type="button" className="btn btn--ghost" onClick={closeDialog}>
                 Cancel
               </button>
-              <button type="submit" className="btn btn--primary">
+              <button type="submit" className="btn btn--primary" disabled={dialogPairConflicts.length > 0}>
                 Add
               </button>
             </div>
