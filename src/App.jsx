@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import "./App.css";
 
 const NAV_ITEMS = [
@@ -93,24 +93,34 @@ const COLOR_OPTIONS = [
   { label: "Yellow", hex: "#f9a825" },
 ];
 
-const COMPANY_OPTIONS = ["Westside Mechanical", "ABC Plumbing", "Trimble"];
+/** Stroke / border dash patterns (matches Style → Border dropdown). */
+const BORDER_STYLE_OPTIONS = [
+  "Solid",
+  "Dashed (Regular)",
+  "Dotted",
+  "Dash-Dot",
+  "Dash-Dot-Dot",
+  "Long Dash",
+  "Short Dash",
+  "Wavy / Squiggly",
+];
 
-const LINE_WEIGHT_MIN = 0.1;
-const LINE_WEIGHT_MAX = 20;
-const DEFAULT_LINE_WEIGHT = 1;
+const DEFAULT_BORDER_STYLE = BORDER_STYLE_OPTIONS[0];
 
-function clampLineWeight(n) {
+// const COMPANY_OPTIONS = ["Westside Mechanical", "ABC Plumbing", "Trimble"];
+
+const STROKE_WEIGHT_MIN = 0.1;
+const STROKE_WEIGHT_MAX = 20;
+const DEFAULT_STROKE_WEIGHT = 1;
+
+function clampStrokeWeight(n) {
   const x = Number(n);
-  if (!Number.isFinite(x)) return DEFAULT_LINE_WEIGHT;
-  return Math.min(LINE_WEIGHT_MAX, Math.max(LINE_WEIGHT_MIN, x));
+  if (!Number.isFinite(x)) return DEFAULT_STROKE_WEIGHT;
+  return Math.min(STROKE_WEIGHT_MAX, Math.max(STROKE_WEIGHT_MIN, x));
 }
 
-function normalizeLineWeight(n) {
-  return Math.round(clampLineWeight(n) * 100) / 100;
-}
-
-function formatLineWeight(n) {
-  return `${normalizeLineWeight(n)} pt`;
+function normalizeStrokeWeight(n) {
+  return Math.round(clampStrokeWeight(n) * 100) / 100;
 }
 
 function rowAnnotationTypes(row) {
@@ -119,11 +129,11 @@ function rowAnnotationTypes(row) {
   return [ANNOTATION_TYPE_OPTIONS[0]];
 }
 
+/* Company-scoped uniqueness (annotation type + company):
 function pairKey(type, company) {
   return `${type}\0${company}`;
 }
 
-/** @param {{ annotationTypes?: string[], companies?: string[], annotationType?: string }} row */
 function rowPairKeys(row) {
   const types = rowAnnotationTypes(row);
   const companies = Array.isArray(row.companies) ? row.companies : [];
@@ -136,7 +146,6 @@ function rowPairKeys(row) {
   return keys;
 }
 
-/** Map pairKey -> row id (first row wins) for all rows except excludeRowId. */
 function pairKeyToRowIdMap(rows, excludeRowId) {
   const map = new Map();
   for (const row of rows) {
@@ -148,12 +157,6 @@ function pairKeyToRowIdMap(rows, excludeRowId) {
   return map;
 }
 
-/**
- * @param {{ annotationTypes?: string[], companies?: string[], annotationType?: string }} candidate
- * @param {Array<{ id: string, annotationTypes?: string[], companies?: string[], annotationType?: string }>} rows
- * @param {string | null} excludeRowId
- * @returns {{ type: string, company: string, otherRowId: string }[]}
- */
 function findPairConflicts(candidate, rows, excludeRowId) {
   const owners = pairKeyToRowIdMap(rows, excludeRowId);
   const out = [];
@@ -181,6 +184,7 @@ function formatConflictPairs(conflicts) {
   }
   return parts.join("; ");
 }
+*/
 
 function createDefaultAnnotationRows() {
   return [
@@ -191,8 +195,9 @@ function createDefaultAnnotationRows() {
       fillOpacity: 50,
       strokeColor: "Green",
       strokeOpacity: 100,
-      lineWeight: 1,
-      companies: ["Westside Mechanical"],
+      borderStyle: DEFAULT_BORDER_STYLE,
+      strokeWeight: 1,
+      // companies: ["Westside Mechanical"],
     },
   ];
 }
@@ -203,8 +208,9 @@ const ANNOTATION_TABLE_COLUMNS = [
   "Fill Opacity",
   "Stroke Color",
   "Stroke Opacity",
-  "Line Weight",
-  "Company",
+  // "Border Style", // hidden — still stored on row / set in Add dialog
+  // "Stroke Weight",
+  // "Company",
 ];
 
 const defaultFormState = () => ({
@@ -213,8 +219,9 @@ const defaultFormState = () => ({
   fillOpacity: 100,
   strokeColor: COLOR_OPTIONS[0].label,
   strokeOpacity: 100,
-  lineWeight: DEFAULT_LINE_WEIGHT,
-  companies: [],
+  borderStyle: DEFAULT_BORDER_STYLE,
+  strokeWeight: DEFAULT_STROKE_WEIGHT,
+  // companies: [],
 });
 
 function MultiTagPicker({
@@ -368,7 +375,7 @@ function MultiTagPicker({
   );
 }
 
-function CompanyTagPicker(props) {
+/* function CompanyTagPicker(props) {
   return (
     <MultiTagPicker
       {...props}
@@ -377,25 +384,22 @@ function CompanyTagPicker(props) {
       emptyFilterMessage="No matching companies"
     />
   );
-}
+} */
 
 function DefaultAnnotationStylesView() {
   const dialogRef = useRef(/** @type {HTMLDialogElement | null} */ (null));
   const [dialogOpen, setDialogOpen] = useState(false);
-  const [companyPickerKey, setCompanyPickerKey] = useState(0);
+  // const [companyPickerKey, setCompanyPickerKey] = useState(0);
   const [rows, setRows] = useState(() => createDefaultAnnotationRows());
   const [form, setForm] = useState(() => defaultFormState());
   const [editingCell, setEditingCell] = useState(null);
   const [selectedRowIds, setSelectedRowIds] = useState(() => new Set());
   /** `index`: show row numbers; `checkbox`: show selection checkboxes (after user activates via row number). */
   const [selectionColumnMode, setSelectionColumnMode] = useState(/** @type {"index" | "checkbox"} */ ("index"));
-  /** Inline edit blocked: highlight this row and the row(s) that already own the pair(s). */
-  const [tablePairConflict, setTablePairConflict] = useState(
-    /** @type {{ sourceRowId: string, otherRowIds: string[], summary: string } | null} */ (null)
-  );
+  /* const [tablePairConflict, setTablePairConflict] = useState(null); */
   const selectAllRef = useRef(/** @type {HTMLInputElement | null} */ (null));
 
-  const dialogPairConflicts = useMemo(() => {
+  /* const dialogPairConflicts = useMemo(() => {
     if (!dialogOpen) return [];
     return findPairConflicts(
       { annotationTypes: form.annotationTypes, companies: form.companies },
@@ -412,7 +416,7 @@ function DefaultAnnotationStylesView() {
       s.add(tablePairConflict.sourceRowId);
     }
     return s;
-  }, [dialogPairConflicts, tablePairConflict]);
+  }, [dialogPairConflicts, tablePairConflict]); */
 
   useEffect(() => {
     const el = dialogRef.current;
@@ -482,13 +486,13 @@ function DefaultAnnotationStylesView() {
       setEditingCell(null);
     }
     setSelectedRowIds(new Set());
-    setTablePairConflict(null);
+    /* setTablePairConflict(null); */
   }
 
   function openDialog() {
     setForm(defaultFormState());
-    setCompanyPickerKey((k) => k + 1);
-    setTablePairConflict(null);
+    /* setCompanyPickerKey((k) => k + 1); */
+    /* setTablePairConflict(null); */
     setDialogOpen(true);
   }
 
@@ -498,12 +502,12 @@ function DefaultAnnotationStylesView() {
 
   function handleAddSubmit(e) {
     e.preventDefault();
-    const addConflicts = findPairConflicts(
+    /* const addConflicts = findPairConflicts(
       { annotationTypes: form.annotationTypes, companies: form.companies },
       rows,
       null
     );
-    if (addConflicts.length) return;
+    if (addConflicts.length) return; */
     setRows((prev) => [
       ...prev,
       {
@@ -513,8 +517,9 @@ function DefaultAnnotationStylesView() {
         fillOpacity: form.fillOpacity,
         strokeColor: form.strokeColor,
         strokeOpacity: form.strokeOpacity,
-        lineWeight: normalizeLineWeight(form.lineWeight),
-        companies: [...form.companies],
+        borderStyle: form.borderStyle,
+        strokeWeight: normalizeStrokeWeight(form.strokeWeight),
+        /* companies: [...form.companies], */
       },
     ]);
     closeDialog();
@@ -524,7 +529,7 @@ function DefaultAnnotationStylesView() {
     setRows((prev) => prev.map((r) => (r.id === rowId ? { ...r, ...patch } : r)));
   }
 
-  function tryPatchRowPairs(rowId, patch) {
+  /* function tryPatchRowPairs(rowId, patch) {
     const row = rows.find((r) => r.id === rowId);
     if (!row) return;
     const candidate = { ...row, ...patch };
@@ -539,7 +544,7 @@ function DefaultAnnotationStylesView() {
     }
     setTablePairConflict(null);
     patchRow(rowId, patch);
-  }
+  } */
 
   function isCellEditing(rowId, field) {
     return editingCell !== null && editingCell.rowId === rowId && editingCell.field === field;
@@ -552,20 +557,9 @@ function DefaultAnnotationStylesView() {
       setEditingCell({ rowId, field: "fillOpacity", draft: row.fillOpacity });
     } else if (field === "strokeOpacity") {
       setEditingCell({ rowId, field: "strokeOpacity", draft: row.strokeOpacity });
-    } else if (field === "lineWeight") {
-      setEditingCell({ rowId, field: "lineWeight", draft: normalizeLineWeight(row.lineWeight ?? DEFAULT_LINE_WEIGHT) });
     } else {
       setEditingCell({ rowId, field });
     }
-  }
-
-  function commitLineWeightFromCell(rowId) {
-    setEditingCell((ec) => {
-      if (ec && ec.rowId === rowId && ec.field === "lineWeight" && typeof ec.draft === "number") {
-        patchRow(rowId, { lineWeight: normalizeLineWeight(ec.draft) });
-      }
-      return null;
-    });
   }
 
   function commitOpacityFromCell(rowId, field) {
@@ -598,17 +592,18 @@ function DefaultAnnotationStylesView() {
             <IconInfoCircle />
           </button>
           <span id="annotation-styles-tooltip" className="annotation-styles-tooltip" role="tooltip">
-            These styles will apply to all users of the specified companies when they login to the project/portfolio. Users can still change the style.
+            {/* These styles will apply to all users of the specified companies when they login to the project/portfolio. Users can still change the style. */}
+            These styles apply when users work with annotations in this project. Users can still change the style.
           </span>
         </span>
       </div>
 
-      {tablePairConflict && (
+      {/* {tablePairConflict && (
         <div className="rule-conflict-banner" role="alert">
           Each annotation type and company can only appear in one rule. Conflicting combinations: {tablePairConflict.summary}.
           The highlighted rows include the rule you are editing and the rule(s) that already use this pairing.
         </div>
-      )}
+      )} */}
 
       <div className={`table-card${editingCell ? " table-card--editing" : ""}`}>
         <div className="table-card__toolbar">
@@ -662,7 +657,7 @@ function DefaultAnnotationStylesView() {
             <tbody>
               {rows.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="data-table__empty">
+                  <td colSpan={6} className="data-table__empty">
                     No rows yet. Use + to add a style.
                   </td>
                 </tr>
@@ -671,11 +666,10 @@ function DefaultAnnotationStylesView() {
                   <tr
                     key={row.id}
                     className={[
-                      editingCell?.rowId === row.id &&
-                      (editingCell?.field === "companies" || editingCell?.field === "annotationTypes")
+                      editingCell?.rowId === row.id && editingCell?.field === "annotationTypes"
                         ? "data-table__row--cell-edit"
                         : "",
-                      conflictHighlightedRowIds.has(row.id) ? "data-table__row--rule-conflict" : "",
+                      /* conflictHighlightedRowIds.has(row.id) ? "data-table__row--rule-conflict" : "", */
                     ]
                       .filter(Boolean)
                       .join(" ") || undefined}
@@ -720,7 +714,7 @@ function DefaultAnnotationStylesView() {
                             labelledBy={`annotation-types-cell-label-${row.id}`}
                             options={ANNOTATION_TYPE_OPTIONS}
                             value={rowAnnotationTypes(row)}
-                            onChange={(annotationTypes) => tryPatchRowPairs(row.id, { annotationTypes })}
+                            onChange={(annotationTypes) => patchRow(row.id, { annotationTypes })}
                             allSelectedPlaceholder="All types added"
                             addPlaceholder="Type or click to add…"
                             emptyFilterMessage="No matching types"
@@ -917,61 +911,7 @@ function DefaultAnnotationStylesView() {
                         </span>
                       )}
                     </td>
-                    <td>
-                      {isCellEditing(row.id, "lineWeight") ? (
-                        <input
-                          autoFocus
-                          className="table-inline-number table-inline-number--weight"
-                          type="number"
-                          min={LINE_WEIGHT_MIN}
-                          max={LINE_WEIGHT_MAX}
-                          step={0.01}
-                          value={editingCell?.field === "lineWeight" ? editingCell.draft : normalizeLineWeight(row.lineWeight ?? DEFAULT_LINE_WEIGHT)}
-                          onChange={(e) => {
-                            const raw = e.target.value;
-                            if (raw === "") {
-                              setEditingCell((ec) =>
-                                ec && ec.rowId === row.id && ec.field === "lineWeight" ? { ...ec, draft: LINE_WEIGHT_MIN } : ec
-                              );
-                              return;
-                            }
-                            const v = parseFloat(raw);
-                            setEditingCell((ec) =>
-                              ec && ec.rowId === row.id && ec.field === "lineWeight"
-                                ? { ...ec, draft: Number.isFinite(v) ? v : ec.draft }
-                                : ec
-                            );
-                          }}
-                          onBlur={() => commitLineWeightFromCell(row.id)}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter") {
-                              e.preventDefault();
-                              commitLineWeightFromCell(row.id);
-                            }
-                            if (e.key === "Escape") {
-                              e.preventDefault();
-                              setEditingCell(null);
-                            }
-                          }}
-                          aria-label="Line Weight in points"
-                        />
-                      ) : (
-                        <span
-                          className="data-table__cell-value"
-                          role="button"
-                          tabIndex={0}
-                          onClick={() => openCellEditor(row.id, "lineWeight")}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter" || e.key === " ") {
-                              e.preventDefault();
-                              openCellEditor(row.id, "lineWeight");
-                            }
-                          }}
-                        >
-                          {formatLineWeight(row.lineWeight ?? DEFAULT_LINE_WEIGHT)}
-                        </span>
-                      )}
-                    </td>
+                    {/* Company column (commented out)
                     <td>
                       {isCellEditing(row.id, "companies") ? (
                         <div
@@ -1012,6 +952,7 @@ function DefaultAnnotationStylesView() {
                         </span>
                       )}
                     </td>
+                    */}
                   </tr>
                 ))
               )}
@@ -1031,12 +972,11 @@ function DefaultAnnotationStylesView() {
             New annotation style
           </h3>
           <form className="dialog-form" onSubmit={handleAddSubmit}>
-            <div className={`dialog-select-wrap${dialogPairConflicts.length ? " dialog-select-wrap--conflict" : ""}`}>
+            <div className="dialog-select-wrap">
               <span className="dialog-legend" id="annotation-types-label">
                 Annotation Type
               </span>
               <MultiTagPicker
-                key={`ann-${companyPickerKey}`}
                 id="annotation-types-input"
                 labelledBy="annotation-types-label"
                 options={ANNOTATION_TYPE_OPTIONS}
@@ -1170,40 +1110,60 @@ function DefaultAnnotationStylesView() {
               </div>
             </div>
 
+            <div className="dialog-select-wrap">
+              <span className="dialog-legend" id="border-style-label">
+                Border Style
+              </span>
+              <select
+                className="dialog-select"
+                aria-labelledby="border-style-label"
+                value={form.borderStyle}
+                onChange={(e) => setForm((f) => ({ ...f, borderStyle: e.target.value }))}
+              >
+                {BORDER_STYLE_OPTIONS.map((opt) => (
+                  <option key={opt} value={opt}>
+                    {opt}
+                  </option>
+                ))}
+              </select>
+            </div>
+
             <div className="dialog-opacity-block">
-              <span className="dialog-legend" id="line-weight-legend">
-                Line Weight
+              <span className="dialog-legend" id="stroke-weight-legend">
+                Stroke Weight
               </span>
               <div className="dialog-opacity-row">
                 <input
                   type="range"
                   className="dialog-opacity-slider"
-                  min={LINE_WEIGHT_MIN}
-                  max={LINE_WEIGHT_MAX}
+                  min={STROKE_WEIGHT_MIN}
+                  max={STROKE_WEIGHT_MAX}
                   step={0.01}
-                  value={normalizeLineWeight(form.lineWeight)}
-                  onChange={(e) => setForm((f) => ({ ...f, lineWeight: normalizeLineWeight(Number(e.target.value)) }))}
-                  aria-labelledby="line-weight-legend"
+                  value={normalizeStrokeWeight(form.strokeWeight)}
+                  onChange={(e) =>
+                    setForm((f) => ({ ...f, strokeWeight: normalizeStrokeWeight(Number(e.target.value)) }))
+                  }
+                  aria-labelledby="stroke-weight-legend"
                 />
                 <div className="dialog-opacity-number-wrap">
                   <input
                     type="number"
                     className="dialog-opacity-number dialog-opacity-number--weight"
-                    min={LINE_WEIGHT_MIN}
-                    max={LINE_WEIGHT_MAX}
+                    min={STROKE_WEIGHT_MIN}
+                    max={STROKE_WEIGHT_MAX}
                     step={0.01}
-                    value={form.lineWeight}
+                    value={form.strokeWeight}
                     onChange={(e) => {
                       const raw = e.target.value;
                       if (raw === "") {
-                        setForm((f) => ({ ...f, lineWeight: LINE_WEIGHT_MIN }));
+                        setForm((f) => ({ ...f, strokeWeight: STROKE_WEIGHT_MIN }));
                         return;
                       }
                       const v = parseFloat(raw);
                       if (!Number.isFinite(v)) return;
-                      setForm((f) => ({ ...f, lineWeight: normalizeLineWeight(v) }));
+                      setForm((f) => ({ ...f, strokeWeight: normalizeStrokeWeight(v) }));
                     }}
-                    aria-labelledby="line-weight-legend"
+                    aria-labelledby="stroke-weight-legend"
                   />
                   <span className="dialog-opacity-suffix" aria-hidden>
                     pt
@@ -1212,6 +1172,7 @@ function DefaultAnnotationStylesView() {
               </div>
             </div>
 
+            {/* Company field (commented out)
             <div className={`dialog-select-wrap${dialogPairConflicts.length ? " dialog-select-wrap--conflict" : ""}`}>
               <span className="dialog-legend" id="company-label">
                 Company
@@ -1233,12 +1194,13 @@ function DefaultAnnotationStylesView() {
                 table.
               </div>
             )}
+            */}
 
             <div className="dialog-actions">
               <button type="button" className="btn btn--ghost" onClick={closeDialog}>
                 Cancel
               </button>
-              <button type="submit" className="btn btn--primary" disabled={dialogPairConflicts.length > 0}>
+              <button type="submit" className="btn btn--primary">
                 Add
               </button>
             </div>
